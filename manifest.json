@@ -1,0 +1,9 @@
+{
+  "id": "obsigantt",
+  "name": "ObsiGantt",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Visualise task notes as a draggable Gantt chart. Reads startDate/endDate from frontmatter and writes changes back on drag.",
+  "author": "GRoY",
+  "isDesktopOnly": true
+}

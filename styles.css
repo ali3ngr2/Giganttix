@@ -1,0 +1,208 @@
+/* ── Root ────────────────────────────────────────────────────── */
+.task-gantt-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────── */
+.task-gantt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.task-gantt-label {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.task-gantt-select {
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 3px 8px;
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+.task-gantt-mode-group {
+  display: flex;
+  gap: 4px;
+}
+
+.task-gantt-mode-btn,
+.task-gantt-refresh-btn {
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 3px 10px;
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.task-gantt-mode-btn:hover,
+.task-gantt-refresh-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.task-gantt-mode-btn.active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* ── Gantt container ─────────────────────────────────────────── */
+.task-gantt-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-gantt-svg-wrapper {
+  flex: 1;
+  min-height: 0;
+  min-width: 600px;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-gantt-container .gantt-container {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.task-gantt-container svg.gantt {
+  display: block;
+}
+
+/* ── Frappe theme overrides ──────────────────────────────────── */
+.gantt .grid-header {
+  fill: var(--background-secondary) !important;
+}
+
+.gantt .grid-row {
+  fill: var(--background-primary) !important;
+}
+
+.gantt .grid-row:nth-child(even) {
+  fill: var(--background-secondary) !important;
+}
+
+.gantt .row-line,
+.gantt .tick {
+  stroke: var(--background-modifier-border) !important;
+}
+
+.gantt .lower-text,
+.gantt .upper-text {
+  fill: var(--text-muted) !important;
+  font-family: var(--font-interface) !important;
+  font-size: 11px !important;
+}
+
+/* Frappe default label placement: centered inside the bar,
+   outside-right (.big) when the bar is too short */
+.gantt .bar-label {
+  fill: var(--text-on-accent) !important;
+  font-family: var(--font-interface) !important;
+  font-size: 12px !important;
+  dominant-baseline: central !important;
+  /* Frappe sets x to bar midpoint and relies on its own CSS (dropped at
+     build time by ignore-styles) for middle anchoring — restore it here,
+     else labels render start-anchored from the bar's center */
+  text-anchor: middle !important;
+}
+
+/* Outside labels (short bars) — start-anchored, theme text color */
+.gantt .bar-label.big {
+  fill: var(--text-normal) !important;
+  text-anchor: start !important;
+}
+
+.gantt .bar {
+  fill: var(--interactive-accent) !important;
+}
+
+.gantt .bar-progress {
+  /* same accent as the bar, 15% darker */
+  fill: var(--interactive-accent) !important;
+  filter: brightness(0.85);
+}
+
+.gantt .bar-wrapper:hover .bar {
+  filter: brightness(1.1);
+}
+
+.gantt .handle {
+  fill: white !important;
+  opacity: 0.6;
+}
+
+.gantt .handle:hover { opacity: 1; }
+
+/* Frappe 0.6.1 ignores popup:false and may render an unstyled popup on
+   click (its own stylesheet is dropped at build time) — suppress it */
+.task-gantt-container .popup-wrapper {
+  display: none !important;
+}
+
+/* ── Status colours — commented out, using theme default ─────── */
+/*
+.gantt .bar-wrapper.status-en-cours .bar         { fill: #4a9eff !important; }
+.gantt .bar-wrapper.status-en-cours .bar-progress { fill: #2d7dd2 !important; }
+.gantt .bar-wrapper.status-termin-e .bar         { fill: #5cb85c !important; }
+.gantt .bar-wrapper.status-en-attente .bar       { fill: #f0ad4e !important; }
+.gantt .bar-wrapper.status-en-attente .bar-progress { fill: #d4922a !important; }
+.gantt .bar-wrapper.status--venir .bar           { fill: #aaa !important; }
+.gantt .bar-wrapper.status-bloqu-e .bar          { fill: #e05c5c !important; }
+*/
+
+/* ── Weekend shading (Day view) ──────────────────────────────── */
+.gantt .task-gantt-weekend {
+  fill: var(--background-modifier-hover);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ── Today line ──────────────────────────────────────────────── */
+.task-gantt-today-line {
+  stroke: var(--color-red, #e05c5c) !important;
+  stroke-width: 2 !important;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* ── Empty state ─────────────────────────────────────────────── */
+.task-gantt-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: var(--text-muted);
+  text-align: center;
+  gap: 8px;
+}
+
+.task-gantt-empty-hint {
+  font-size: var(--font-ui-small);
+  opacity: 0.7;
+}
