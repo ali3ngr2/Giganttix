@@ -3,7 +3,7 @@ Visualise your task notes as a draggable Gantt chart in Obsidian
 
 ObsiGantt scans your vault for notes with date frontmatter and renders them as an interactive timeline. Each note is one bar. Drag a bar to reschedule the task & the new dates are written back to the note's frontmatter. Click a bar to open the note.
 
-Originally built as a companion to [TaskNotes](https://github.com/callumalpass/tasknotes), but should works with any notes that carry date frontmatter, anything with a start and an end.
+Originally built as a companion to [TaskNotes](https://github.com/callumalpass/tasknotes), but should works with any notes that carry date frontmatter, anything with a startDate and endDate.
 
 ![ObsiGantt and TaskNotes](assets/Obsigant-tasknotes.png)
 
