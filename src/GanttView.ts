@@ -197,7 +197,7 @@ export class GanttView extends ItemView {
 
   private drawGantt(tasks: TaskNote[], preserveScroll = false): void {
     // Capture scroll position of the old chart before it is destroyed
-    const prevGc = this.container.querySelector(".gantt-container") as HTMLElement | null;
+    const prevGc = this.container.querySelector(".gantt-container");
     const saved = preserveScroll && prevGc
       ? { left: prevGc.scrollLeft, top: prevGc.scrollTop }
       : null;
@@ -257,7 +257,7 @@ export class GanttView extends ItemView {
     this.injectTodayLine(todayX);
     window.setTimeout(() => {
       if (saved) {
-        const gc = this.contentEl.querySelector(".gantt-container") as HTMLElement | null;
+        const gc = this.contentEl.querySelector(".gantt-container");
         if (gc) { gc.scrollLeft = saved.left; gc.scrollTop = saved.top; }
       } else {
         this.jumpToToday(todayX);
@@ -296,7 +296,7 @@ export class GanttView extends ItemView {
   /** Tints Sat/Sun columns. Rects go into Frappe's g.grid layer → under bars. */
   private shadeWeekends(tasks: TaskNote[]): void {
     if (this.viewMode !== "Day" || tasks.length === 0) return;
-    const svg  = this.contentEl.querySelector("svg.gantt") as SVGSVGElement | null;
+    const svg  = this.contentEl.querySelector("svg.gantt");
     const grid = svg?.querySelector("g.grid");
     if (!svg || !grid) return;
 
@@ -372,7 +372,7 @@ export class GanttView extends ItemView {
   }
 
   private injectTodayLine(x: number): void {
-    const svg = this.contentEl.querySelector("svg.gantt") as SVGSVGElement | null;
+    const svg = this.contentEl.querySelector("svg.gantt");
     if (!svg) return;
     svg.querySelector(".task-gantt-today-line")?.remove();
     const h = parseFloat(svg.getAttribute("height") ?? "500");
@@ -386,7 +386,7 @@ export class GanttView extends ItemView {
   }
 
   private jumpToToday(x: number, attempts = 10): void {
-    const gc = this.contentEl.querySelector(".gantt-container") as HTMLElement | null;
+    const gc = this.contentEl.querySelector(".gantt-container");
     if (!gc) return;
     const target = Math.max(0, x - gc.clientWidth / 2);
     gc.scrollLeft = target;

@@ -32,7 +32,8 @@ export default class TaskGanttPlugin extends Plugin {
   settings: TaskGanttSettings = { ...DEFAULT_SETTINGS };
 
   async onload(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const saved = (await this.loadData()) as Partial<TaskGanttSettings> | null;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 
     this.registerView(
       GANTT_VIEW_TYPE,
