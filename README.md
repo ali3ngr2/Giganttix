@@ -23,10 +23,10 @@ progress: 40
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `startDate` | yes* | `YYYY-MM-DD` (also accepts slash and verbose formats) |
-| `endDate` | yes* | same formats; *one of the two dates is enough (1-day bar) |
+| `startDate` | yes* | `YYYY-MM-DD`  |
+| `endDate` | yes* | same formats |
 | `Status` | no | powers the status filter dropdown |
-| `client` | no | shown after the task name; wikilinks display clean |
+| `client` | no | shown after the task name |
 | `progress` | no | 0–100, rendered as a darker segment inside the bar |
 
 Field names are case-insensitive. 
