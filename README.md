@@ -69,13 +69,11 @@ Open the chart from the ribbon icon or the command palette (`ObsiGantt: Open Gan
 
 ## Notes and limitations
 
-- Writing dates back re-serializes the note's frontmatter block; values are untouched but formatting (quoting style) may normalize.
-- The timeline is computed from the currently filtered tasks, so column positions can shift when switching filters.
-- Desktop only for now.
+- Desktop only for now. Sorta works on mobile, still a bit buggy.
 
 ## Acknowledgements
 
-Built with TypeScript and esbuild on top of [Frappe Gantt](https://github.com/frappe/gantt) (MIT). Developed in collaboration with [Claude](https://claude.com) (Anthropic).
+Built with TypeScript and esbuild on top of [Frappe Gantt](https://github.com/frappe/gantt) (MIT). Developed with [Claude Cowork](https://claude.com) (Anthropic).
 
 ## License
 
