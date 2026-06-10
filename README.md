@@ -1,10 +1,6 @@
 # ObsiGantt
 Visualise your task notes as a draggable Gantt chart in Obsidian
 
-# ObsiGantt
-
-Visualise your task notes as a draggable Gantt chart.
-
 ObsiGantt scans your vault for notes with date frontmatter and renders them as an interactive timeline. Each note is one bar. Drag a bar to reschedule the task & the new dates are written back to the note's frontmatter. Click a bar to open the note.
 
 Originally built as a companion to [TaskNotes](https://github.com/callumalpass/tasknotes) (one note = one task), but it works with any notes that carry date frontmatter — projects, trips, content calendars, anything with a start and an end.
@@ -18,7 +14,7 @@ Add dates to any note's frontmatter and it appears on the chart:
 startDate: 2026-06-05
 endDate: 2026-06-30
 status: In progress
-client: "[[Acme Corp]]"
+client: "[[Moe's Tavern]]"
 progress: 40
 ---
 ```
@@ -45,7 +41,7 @@ Field names are case-insensitive.
 - **Weekend shading** in Day view
 - **Scope your tasks** : limit the chart to a folder and/or require a frontmatter property (e.g. only notes with a `projects` property)
 - **Status colors** : keep the theme accent color, or assign a color per status in settings
-- **Theme-aware** — uses Obsidian CSS variables throughout; works with any theme
+- **Theme-aware** : uses Obsidian CSS variables throughout; works with any theme
 
 ## Usage
 
@@ -83,4 +79,3 @@ Built with TypeScript and esbuild on top of [Frappe Gantt](https://github.com/fr
 ## License
 
 [MIT](LICENSE)
-
