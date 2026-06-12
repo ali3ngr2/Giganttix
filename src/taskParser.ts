@@ -4,6 +4,8 @@ import { TaskNote } from "./types";
 export interface TaskSourceOptions {
   sourceFolder?: string;     // "" or undefined → whole vault
   requiredProperty?: string; // "" or undefined → no requirement
+  startProperty?: string;    // "" or undefined → "startDate"
+  endProperty?: string;      // "" or undefined → "endDate"
 }
 
 export async function loadTaskNotes(
@@ -11,41 +13,20 @@ export async function loadTaskNotes(
   opts: TaskSourceOptions = {}
 ): Promise<TaskNote[]> {
   const tasks: TaskNote[] = [];
-  const folder = (opts.sourceFolder ?? "").replace(/^\/+|\/+$/g, "");
+  const scope = parseScope(opts);
 
-  // "name" → property must exist (any value, empty included)
-  // "name: value" → property must exist AND contain that value
-  const reqRaw   = (opts.requiredProperty ?? "").trim();
-  const colonIdx = reqRaw.indexOf(":");
-  const reqName  = (colonIdx >= 0 ? reqRaw.slice(0, colonIdx) : reqRaw).trim();
-  const reqValue = colonIdx >= 0 ? reqRaw.slice(colonIdx + 1).trim().toLowerCase() : "";
+  const startProp = (opts.startProperty ?? "").trim() || "startDate";
+  const endProp   = (opts.endProperty ?? "").trim() || "endDate";
 
   for (const file of app.vault.getMarkdownFiles()) {
-    if (folder && !file.path.startsWith(folder + "/")) continue;
-
-    const cache = app.metadataCache.getFileCache(file);
-    const fm = cache?.frontmatter;
+    const fm = app.metadataCache.getFileCache(file)?.frontmatter;
     if (!fm) continue;
+    if (!inScope(file.path, fm, scope)) continue;
 
     const get = (key: string) => getCI(fm, key);
 
-    if (reqName) {
-      const val = get(reqName);
-      // Property must EXIST — empty values count (Obsidian stores empty
-      // properties as null, so only undefined means "absent")
-      if (val === undefined) continue;
-      if (reqValue) {
-        // Value match, case-insensitive; list properties match any element
-        const values = Array.isArray(val) ? val : [val];
-        const hit = values.some(
-          (v) => String(v).trim().toLowerCase() === reqValue
-        );
-        if (!hit) continue;
-      }
-    }
-
-    const rawStart = get("startDate") ?? get("start");
-    const rawEnd   = get("endDate")   ?? get("end");
+    const rawStart = get(startProp);
+    const rawEnd   = get(endProp);
 
     if (!rawStart && !rawEnd) continue;
 
@@ -72,7 +53,7 @@ export async function loadTaskNotes(
       name:     file.basename,
       start:    s,
       end:      e,
-      status:   String(get("status") ?? ""),
+      status:   firstString(get("status")),
       progress,
       client:   parseClient(get("client")),
     });
@@ -92,6 +73,84 @@ export function collectStatuses(tasks: TaskNote[]): string[] {
   return Array.from(seen.values()).sort((a, b) =>
     a.localeCompare(b, undefined, { sensitivity: "base" })
   );
+}
+
+/**
+ * All status values among notes in scope (same folder/required-property
+ * gates as loadTaskNotes — only the date requirement is waived). Used by
+ * the bar context menu so a status stays offered even when no charted
+ * task currently has it.
+ */
+export function collectVaultStatuses(
+  app: App,
+  opts: TaskSourceOptions = {}
+): string[] {
+  const scope = parseScope(opts);
+  const seen = new Map<string, string>();
+  for (const file of app.vault.getMarkdownFiles()) {
+    const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm) continue;
+    if (!inScope(file.path, fm, scope)) continue;
+    const s = firstString(getCI(fm, "status"));
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (!seen.has(key)) seen.set(key, s);
+  }
+  return Array.from(seen.values()).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" })
+  );
+}
+
+// ── Scope (folder + required property) ──────────────────────────────────────
+
+interface Scope {
+  folder: string;   // "" → whole vault
+  reqName: string;  // "" → no property requirement
+  reqValue: string; // "" → property only has to exist
+}
+
+// "name" → property must exist (any value, empty included)
+// "name: value" → property must exist AND contain that value
+function parseScope(opts: TaskSourceOptions): Scope {
+  const folder   = (opts.sourceFolder ?? "").replace(/^\/+|\/+$/g, "");
+  const reqRaw   = (opts.requiredProperty ?? "").trim();
+  const colonIdx = reqRaw.indexOf(":");
+  const reqName  = (colonIdx >= 0 ? reqRaw.slice(0, colonIdx) : reqRaw).trim();
+  const reqValue =
+    colonIdx >= 0 ? reqRaw.slice(colonIdx + 1).trim().toLowerCase() : "";
+  return { folder, reqName, reqValue };
+}
+
+function inScope(
+  path: string,
+  fm: Record<string, unknown>,
+  scope: Scope
+): boolean {
+  if (scope.folder && !path.startsWith(scope.folder + "/")) return false;
+  if (scope.reqName) {
+    const val = getCI(fm, scope.reqName);
+    // Property must EXIST — empty values count (Obsidian stores empty
+    // properties as null, so only undefined means "absent")
+    if (val === undefined) return false;
+    if (scope.reqValue) {
+      // Value match, case-insensitive; list properties match any element
+      const values = Array.isArray(val) ? val : [val];
+      return values.some(
+        (v) => String(v).trim().toLowerCase() === scope.reqValue
+      );
+    }
+  }
+  return true;
+}
+
+/**
+ * String value of a frontmatter field that may be stored as a list
+ * (Obsidian's "List" property type, TaskNotes): first element wins.
+ */
+function firstString(raw: unknown): string {
+  const v: unknown = Array.isArray(raw) ? raw[0] : raw;
+  if (v == null) return "";
+  return String(v).trim();
 }
 
 function getCI(obj: Record<string, unknown>, key: string): unknown {

@@ -27,15 +27,8 @@
   gap: 6px;
 }
 
-.task-gantt-select {
-  background: var(--background-secondary);
-  color: var(--text-normal);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s);
-  padding: 3px 8px;
-  font-size: var(--font-ui-small);
-  cursor: pointer;
-}
+/* Status select: base look (incl. arrow and hover) comes from
+   Obsidian's native .dropdown class. */
 
 .task-gantt-mode-group {
   display: flex;
@@ -43,6 +36,7 @@
 }
 
 .task-gantt-mode-btn,
+.task-gantt-today-btn,
 .task-gantt-refresh-btn {
   background: var(--background-secondary);
   color: var(--text-muted);
@@ -55,9 +49,14 @@
 }
 
 .task-gantt-mode-btn:hover,
+.task-gantt-today-btn:hover,
 .task-gantt-refresh-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+}
+
+.task-gantt-refresh-btn {
+  margin-left: auto;
 }
 
 .task-gantt-mode-btn.active {
@@ -172,17 +171,6 @@
 .task-gantt-root .gantt .bar-wrapper.task-gantt-status-colored .bar-progress {
   fill: var(--task-gantt-status-color) !important;
 }
-
-/* ── Status colours — commented out, using theme default ─────── */
-/*
-.gantt .bar-wrapper.status-en-cours .bar         { fill: #4a9eff !important; }
-.gantt .bar-wrapper.status-en-cours .bar-progress { fill: #2d7dd2 !important; }
-.gantt .bar-wrapper.status-termin-e .bar         { fill: #5cb85c !important; }
-.gantt .bar-wrapper.status-en-attente .bar       { fill: #f0ad4e !important; }
-.gantt .bar-wrapper.status-en-attente .bar-progress { fill: #d4922a !important; }
-.gantt .bar-wrapper.status--venir .bar           { fill: #aaa !important; }
-.gantt .bar-wrapper.status-bloqu-e .bar          { fill: #e05c5c !important; }
-*/
 
 /* ── Weekend shading (Day view) ──────────────────────────────── */
 .gantt .task-gantt-weekend {

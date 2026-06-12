@@ -1,37 +1,66 @@
 import { App, TFile } from "obsidian";
 
 /**
- * Writes new start/end dates to a note's frontmatter after a drag.
- *
- * Uses Obsidian's official fileManager.processFrontMatter (atomic,
- * YAML-aware) instead of hand-rolled regex. Also cleans up obsolete
- * alias keys (start/end, any casing) and non-canonical casings of
- * startDate/endDate, so a dragged note ends up with exactly one
- * canonical pair.
+ * Looks up the note and runs an atomic frontmatter mutation on it via
+ * Obsidian's official fileManager.processFrontMatter (YAML-aware) —
+ * shared plumbing for all writers below.
  */
-export async function updateTaskDates(
+async function processTaskFrontmatter(
   app: App,
   filePath: string,
-  newStart: string,
-  newEnd: string
+  fn: (fm: Record<string, unknown>) => void
 ): Promise<void> {
   const file = app.vault.getAbstractFileByPath(filePath);
   if (!(file instanceof TFile)) {
     console.warn(`[TaskGantt] File not found: ${filePath}`);
     return;
   }
+  await app.fileManager.processFrontMatter(file, fn);
+}
 
-  await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-    for (const key of Object.keys(fm)) {
-      const lower = key.toLowerCase();
-      const isObsoleteAlias = lower === "start" || lower === "end";
-      const isWrongCasing =
-        (lower === "startdate" && key !== "startDate") ||
-        (lower === "enddate" && key !== "endDate");
-      if (isObsoleteAlias || isWrongCasing) delete fm[key];
-    }
-    fm.startDate = newStart;
-    fm.endDate = newEnd;
+/**
+ * Writes new start/end dates to a note's frontmatter after a drag.
+ * Casing-preserving: writes to the existing keys whatever their casing
+ * (other plugins may own them); the configured names are only used when
+ * the property doesn't exist yet. Never deletes or renames anything.
+ */
+export async function updateTaskDates(
+  app: App,
+  filePath: string,
+  newStart: string,
+  newEnd: string,
+  startProp = "startDate",
+  endProp = "endDate"
+): Promise<void> {
+  const startLower = startProp.toLowerCase();
+  const endLower   = endProp.toLowerCase();
+
+  await processTaskFrontmatter(app, filePath, (fm) => {
+    const keys = Object.keys(fm);
+    const startKey = keys.find((k) => k.toLowerCase() === startLower) ?? startProp;
+    const endKey   = keys.find((k) => k.toLowerCase() === endLower)   ?? endProp;
+    fm[startKey] = newStart;
+    fm[endKey] = newEnd;
+  });
+}
+
+/**
+ * Writes a new status value (from the bar context menu).
+ *
+ * Deliberately shape- and casing-preserving: other plugins (e.g. TaskNotes)
+ * and the Obsidian property editor may own this property. Writes to the
+ * existing key whatever its casing, keeps list values as lists, and never
+ * deletes or renames anything.
+ */
+export async function updateTaskStatus(
+  app: App,
+  filePath: string,
+  status: string
+): Promise<void> {
+  await processTaskFrontmatter(app, filePath, (fm) => {
+    const key =
+      Object.keys(fm).find((k) => k.toLowerCase() === "status") ?? "status";
+    fm[key] = Array.isArray(fm[key]) ? [status] : status;
   });
 }
 
@@ -41,18 +70,11 @@ export async function updateTaskProgress(
   filePath: string,
   progress: number
 ): Promise<void> {
-  const file = app.vault.getAbstractFileByPath(filePath);
-  if (!(file instanceof TFile)) {
-    console.warn(`[TaskGantt] File not found: ${filePath}`);
-    return;
-  }
   const clamped = Math.max(0, Math.min(100, Math.round(progress)));
-  await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-    // Remove non-canonical casings (Progress, PROGRESS, …) — same cleanup
-    // as updateTaskDates, else a duplicate lowercase key gets added
-    for (const key of Object.keys(fm)) {
-      if (key.toLowerCase() === "progress" && key !== "progress") delete fm[key];
-    }
-    fm.progress = clamped;
+  await processTaskFrontmatter(app, filePath, (fm) => {
+    // Casing-preserving, same policy as updateTaskDates/updateTaskStatus
+    const key =
+      Object.keys(fm).find((k) => k.toLowerCase() === "progress") ?? "progress";
+    fm[key] = clamped;
   });
 }

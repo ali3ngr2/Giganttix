@@ -1,9 +1,10 @@
-import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, Menu } from "obsidian";
 import Gantt from "frappe-gantt";
-import { loadTaskNotes, collectStatuses, formatDate } from "./taskParser";
-import { updateTaskDates, updateTaskProgress } from "./frontmatterWriter";
+import { loadTaskNotes, collectStatuses, collectVaultStatuses, formatDate } from "./taskParser";
+import { updateTaskDates, updateTaskProgress, updateTaskStatus } from "./frontmatterWriter";
 import { TaskNote, FrappeTask } from "./types";
 import type TaskGanttPlugin from "./main";
+import { datePropertyNames, taskSourceOptions } from "./main";
 
 export const GANTT_VIEW_TYPE = "task-gantt-view";
 type ViewMode = "Day" | "Week" | "Month";
@@ -14,6 +15,7 @@ export class GanttView extends ItemView {
   private statusFilter = "";
   private viewMode: ViewMode = "Week";
   private pendingWrites: Set<string> = new Set();
+  private lastDragEnd = 0;
 
   private container!: HTMLElement;
   private filterSelect!: HTMLSelectElement;
@@ -33,6 +35,31 @@ export class GanttView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.buildShell();
+    // Right-click on a bar: status menu (delegated — bars are recreated
+    // on every redraw, the container is not)
+    this.registerDomEvent(this.container, "contextmenu", (evt) => {
+      const target = evt.target instanceof Element ? evt.target : null;
+      const wrapper = target?.closest(".bar-wrapper");
+      const task = this.tasks.find(
+        (t) => t.id === wrapper?.getAttribute("data-id")
+      );
+      if (!task) return;
+      evt.preventDefault();
+      this.showBarMenu(evt, task);
+    });
+    // Left-click on a bar: open the note. Frappe 0.6.x only fires its
+    // on_click on double-click and suppresses it for 1s after any drag,
+    // so we handle clicks ourselves (delegated, like contextmenu above).
+    this.registerDomEvent(this.container, "click", (evt) => {
+      const target = evt.target instanceof Element ? evt.target : null;
+      if (!target || target.closest(".handle")) return; // resize/progress handles
+      const id = target.closest(".bar-wrapper")?.getAttribute("data-id");
+      if (!id) return;
+      // Ignore the click that ends a drag (frappe fires the date/progress
+      // callback on mouseup, just before this click event)
+      if (Date.now() - this.lastDragEnd < 400) return;
+      this.openTaskNote(id);
+    });
     await this.reload();
     this.registerEvent(
       this.app.metadataCache.on("changed", async (file) => {
@@ -41,6 +68,15 @@ export class GanttView extends ItemView {
         if (this.pendingWrites.delete(file.path)) return;
         await this.reload(true);
       })
+    );
+    // metadataCache "changed" does not fire for renames or deletions —
+    // without these, a renamed task keeps its old name (and a deleted
+    // task keeps its bar) until some other edit triggers a reload.
+    this.registerEvent(
+      this.app.vault.on("rename", () => { void this.reload(true); })
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", () => { void this.reload(true); })
     );
   }
 
@@ -58,7 +94,9 @@ export class GanttView extends ItemView {
     // Status filter
     const label = toolbar.createEl("label", { cls: "task-gantt-label" });
     label.createSpan({ text: "Status:" });
-    this.filterSelect = label.createEl("select", { cls: "task-gantt-select" });
+    this.filterSelect = label.createEl("select", {
+      cls: ["dropdown", "task-gantt-select"],
+    });
     this.filterSelect.addEventListener("change", () => {
       this.statusFilter = this.filterSelect.value;
       this.plugin.settings.statusFilter = this.statusFilter;
@@ -77,7 +115,16 @@ export class GanttView extends ItemView {
       btn.addEventListener("click", () => this.setViewMode(mode));
     }
 
-    // Refresh button
+    // Today button — scroll the chart back to the current date
+    toolbar.createEl("button", {
+      text: "Today",
+      cls: "task-gantt-today-btn",
+      attr: { title: "Scroll to today" },
+    }).addEventListener("click", () => {
+      this.jumpToToday(this.computeTodayX(this.getFiltered()));
+    });
+
+    // Refresh button (pushed to the far right via CSS)
     toolbar.createEl("button", {
       text: "↻",
       cls: "task-gantt-refresh-btn",
@@ -127,11 +174,10 @@ export class GanttView extends ItemView {
   // ── Data ───────────────────────────────────────────────────────────────────
 
   async reload(preserveScroll = false): Promise<void> {
-    const s = this.plugin.settings;
-    const fresh = await loadTaskNotes(this.app, {
-      sourceFolder: s.sourceFolder,
-      requiredProperty: s.requiredProperty,
-    });
+    const fresh = await loadTaskNotes(
+      this.app,
+      taskSourceOptions(this.plugin.settings)
+    );
     // Auto-triggered reloads (preserveScroll): skip the redraw entirely when
     // no task data actually changed — e.g. typing in a note body or editing
     // unrelated notes. Kills the flicker; manual ↻ always redraws.
@@ -222,6 +268,7 @@ export class GanttView extends ItemView {
       padding:     24,
 
       on_date_change: async (task: FrappeTask, start: Date, end: Date) => {
+        this.lastDragEnd = Date.now();
         const newStart = formatDate(start);
         const newEnd   = formatDate(end);
         // Keep in-memory state correct and mark the write as ours so the
@@ -230,22 +277,17 @@ export class GanttView extends ItemView {
         if (t) { t.start = newStart; t.end = newEnd; }
         this.addTooltips();
         this.markPendingWrite(task.id);
-        await updateTaskDates(this.app, task.id, newStart, newEnd);
+        const props = datePropertyNames(this.plugin.settings);
+        await updateTaskDates(this.app, task.id, newStart, newEnd, props.start, props.end);
       },
 
       on_progress_change: async (task: FrappeTask, progress: number) => {
+        this.lastDragEnd = Date.now();
         const t = this.tasks.find((x) => x.id === task.id);
         if (t) t.progress = progress;
         this.addTooltips();
         this.markPendingWrite(task.id);
         await updateTaskProgress(this.app, task.id, progress);
-      },
-
-      on_click: (task: FrappeTask) => {
-        const file = this.app.vault.getAbstractFileByPath(task.id);
-        if (file instanceof TFile) {
-          void this.app.workspace.getLeaf(false).openFile(file);
-        }
       },
     });
 
@@ -263,6 +305,58 @@ export class GanttView extends ItemView {
         this.jumpToToday(todayX);
       }
     }, 50);
+  }
+
+  // ── Bar context menu ───────────────────────────────────────────────────────
+
+  /** Status picker (custom statuses from settings + in-scope note statuses) + open note. */
+  private showBarMenu(evt: MouseEvent, task: TaskNote): void {
+    const menu = new Menu();
+    const s = this.plugin.settings;
+    // Custom statuses (settings) first, in the user's order, then any
+    // other status found on in-scope notes (already sorted). Deduped
+    // case-insensitively — the settings casing wins.
+    const seen = new Map<string, string>();
+    for (const st of s.customStatuses) {
+      if (st && !seen.has(st.toLowerCase())) seen.set(st.toLowerCase(), st);
+    }
+    for (const st of collectVaultStatuses(this.app, taskSourceOptions(s))) {
+      if (!seen.has(st.toLowerCase())) seen.set(st.toLowerCase(), st);
+    }
+    for (const status of seen.values()) {
+      menu.addItem((item) =>
+        item
+          .setTitle(status)
+          .setChecked(status.toLowerCase() === task.status.toLowerCase())
+          .onClick(() => {
+            // No markPendingWrite: the metadataCache reload must run so
+            // bar colors and filter counts pick up the new status.
+            void updateTaskStatus(this.app, task.id, status);
+          })
+      );
+    }
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("Open note")
+        .setIcon("file-text")
+        .onClick(() => this.openTaskNote(task.id))
+    );
+    menu.showAtMouseEvent(evt);
+  }
+
+  private openTaskNote(path: string): void {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return;
+    // Already open in a tab? Focus it instead of opening a duplicate
+    // (also absorbs the second click of a double-click).
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      if (leaf.getViewState().state?.file === path) {
+        void this.app.workspace.revealLeaf(leaf);
+        return;
+      }
+    }
+    void this.app.workspace.getLeaf("tab").openFile(file);
   }
 
   // ── Tooltips ───────────────────────────────────────────────────────────────
@@ -405,8 +499,9 @@ export class GanttView extends ItemView {
     this.container.empty();
     const msg = this.container.createDiv({ cls: "task-gantt-empty" });
     msg.createEl("p", { text: "No tasks found matching the current filter." });
+    const props = datePropertyNames(this.plugin.settings);
     msg.createEl("p", {
-      text: "Add startDate and endDate (YYYY-MM-DD) to your task note frontmatter.",
+      text: `Add ${props.start} and ${props.end} (YYYY-MM-DD) to your task note frontmatter.`,
       cls: "task-gantt-empty-hint",
     });
     const s = this.plugin.settings;

@@ -1,6 +1,18 @@
-import { App, Plugin, PluginSettingTab, Setting, normalizePath } from "obsidian";
+import {
+  AbstractInputSuggest,
+  App,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  normalizePath,
+} from "obsidian";
 import { GanttView, GANTT_VIEW_TYPE } from "./GanttView";
-import { loadTaskNotes, collectStatuses } from "./taskParser";
+import {
+  loadTaskNotes,
+  collectStatuses,
+  collectVaultStatuses,
+  TaskSourceOptions,
+} from "./taskParser";
 
 export type ViewMode = "Day" | "Week" | "Month";
 
@@ -14,6 +26,9 @@ export interface TaskGanttSettings {
   statusColors: Record<string, string>; // lowercase status → hex
   sourceFolder: string;     // "" → whole vault
   requiredProperty: string; // "" → no property requirement
+  startProperty: string;    // "" → "startDate"
+  endProperty: string;      // "" → "endDate"
+  customStatuses: string[]; // always offered in the bar menu, in this order
 }
 
 const DEFAULT_SETTINGS: TaskGanttSettings = {
@@ -26,7 +41,32 @@ const DEFAULT_SETTINGS: TaskGanttSettings = {
   statusColors: {},
   sourceFolder: "",
   requiredProperty: "",
+  startProperty: "",
+  endProperty: "",
+  customStatuses: [],
 };
+
+/** Effective frontmatter property names ("" → defaults). */
+export function datePropertyNames(s: TaskGanttSettings): { start: string; end: string } {
+  return {
+    start: s.startProperty.trim() || "startDate",
+    end: s.endProperty.trim() || "endDate",
+  };
+}
+
+/**
+ * Loader/scanner options derived from settings — single source of truth
+ * so the chart, the status menu, and the settings tab can't drift apart
+ * on scoping.
+ */
+export function taskSourceOptions(s: TaskGanttSettings): TaskSourceOptions {
+  return {
+    sourceFolder: s.sourceFolder,
+    requiredProperty: s.requiredProperty,
+    startProperty: s.startProperty,
+    endProperty: s.endProperty,
+  };
+}
 
 export default class TaskGanttPlugin extends Plugin {
   settings: TaskGanttSettings = { ...DEFAULT_SETTINGS };
@@ -81,6 +121,9 @@ export default class TaskGanttPlugin extends Plugin {
 }
 
 class TaskGanttSettingTab extends PluginSettingTab {
+  /** Working copy of the status fields currently rendered (incl. empties). */
+  private statusFields: string[] = [];
+
   constructor(app: App, private plugin: TaskGanttPlugin) {
     super(app, plugin);
   }
@@ -88,6 +131,19 @@ class TaskGanttSettingTab extends PluginSettingTab {
   private async save(): Promise<void> {
     await this.plugin.saveSettings();
     this.plugin.refreshGanttViews();
+  }
+
+  /** Statuses found on in-scope notes — feeds the field suggestions. */
+  private vaultStatuses(): string[] {
+    return collectVaultStatuses(this.app, taskSourceOptions(this.plugin.settings));
+  }
+
+  /** Persist the status fields (trimmed, empties dropped, order kept). */
+  private async saveStatusFields(): Promise<void> {
+    this.plugin.settings.customStatuses = this.statusFields
+      .map((v) => v.trim())
+      .filter(Boolean);
+    await this.plugin.saveSettings();
   }
 
   display(): void {
@@ -176,6 +232,79 @@ class TaskGanttSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName("Start date property")
+      .setDesc(
+        "Frontmatter property holding the task start date (case-insensitive). " +
+        "Leave empty to use \"startDate\". Drags write dates back to this property."
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder("startDate")
+          .setValue(this.plugin.settings.startProperty)
+          .onChange(async (v) => {
+            this.plugin.settings.startProperty = v.trim();
+            await this.save();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("End date property")
+      .setDesc(
+        "Frontmatter property holding the task end date (case-insensitive). " +
+        "Leave empty to use \"endDate\"."
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder("endDate")
+          .setValue(this.plugin.settings.endProperty)
+          .onChange(async (v) => {
+            this.plugin.settings.endProperty = v.trim();
+            await this.save();
+          })
+      );
+
+    // ── Statuses ──
+    new Setting(containerEl)
+      .setName("Statuses")
+      .setDesc(
+        "Always offered in the bar right-click menu, in this order, in " +
+        "addition to statuses found on your notes. Typing suggests " +
+        "existing statuses. Clear a field to remove it (empty fields " +
+        "are dropped when settings reopen)."
+      );
+
+    this.statusFields = [...this.plugin.settings.customStatuses];
+    while (this.statusFields.length < 4) this.statusFields.push("");
+
+    const fieldsEl = containerEl.createDiv();
+    const renderField = (value: string, i: number) => {
+      new Setting(fieldsEl).addText((t) => {
+        t.setPlaceholder("e.g. In progress").setValue(value);
+        const suggest = new StatusSuggest(this.app, t.inputEl, () =>
+          this.vaultStatuses()
+        );
+        suggest.onSelect((v) => {
+          t.setValue(v);
+          suggest.close();
+          this.statusFields[i] = v;
+          void this.saveStatusFields();
+        });
+        t.onChange(async (v) => {
+          this.statusFields[i] = v;
+          await this.saveStatusFields();
+        });
+      });
+    };
+    this.statusFields.forEach(renderField);
+
+    new Setting(containerEl).addButton((b) =>
+      b.setButtonText("Add status").onClick(() => {
+        this.statusFields.push("");
+        renderField("", this.statusFields.length - 1);
+      })
+    );
+
     // ── Appearance ──
     new Setting(containerEl)
       .setName("Color bars by status")
@@ -199,10 +328,7 @@ class TaskGanttSettingTab extends PluginSettingTab {
 
   private async renderStatusColorPickers(el: HTMLElement): Promise<void> {
     const s = this.plugin.settings;
-    const tasks = await loadTaskNotes(this.app, {
-      sourceFolder: s.sourceFolder,
-      requiredProperty: s.requiredProperty,
-    });
+    const tasks = await loadTaskNotes(this.app, taskSourceOptions(s));
     const statuses = collectStatuses(tasks);
 
     if (statuses.length === 0) {
@@ -236,5 +362,25 @@ class TaskGanttSettingTab extends PluginSettingTab {
             })
         );
     }
+  }
+}
+
+/** Suggests existing vault statuses while typing in a status field. */
+class StatusSuggest extends AbstractInputSuggest<string> {
+  constructor(
+    app: App,
+    inputEl: HTMLInputElement,
+    private readonly source: () => string[]
+  ) {
+    super(app, inputEl);
+  }
+
+  protected getSuggestions(query: string): string[] {
+    const q = query.toLowerCase();
+    return this.source().filter((s) => s.toLowerCase().includes(q));
+  }
+
+  renderSuggestion(value: string, el: HTMLElement): void {
+    el.setText(value);
   }
 }
