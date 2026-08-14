@@ -4,7 +4,7 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
-  normalizePath,
+  debounce,
 } from "obsidian";
 import { GanttView, GANTT_VIEW_TYPE } from "./GanttView";
 import {
@@ -124,11 +124,43 @@ export default class TaskGanttPlugin extends Plugin {
 }
 
 class TaskGanttSettingTab extends PluginSettingTab {
-  /** Working copy of the status fields currently rendered (incl. empties). */
-  private statusFields: string[] = [];
+  /** Statuses on charted tasks — drives the per-status color pickers. */
+  private taskStatuses: string[] = [];
+  /** Statuses on in-scope notes — feeds the status field suggestions. */
+  private vaultStatusCache: string[] = [];
 
   constructor(app: App, private plugin: TaskGanttPlugin) {
     super(app, plugin);
+    // getSettingDefinitions() runs on every tab update AND once at
+    // registration to index settings for search, so it must stay cheap.
+    // The vault scan therefore happens here and the result is cached.
+    void this.refreshStatusCache();
+    const refresh = debounce(() => void this.refreshStatusCache(), 300, true);
+    plugin.registerEvent(this.app.vault.on("create", refresh));
+    plugin.registerEvent(this.app.vault.on("delete", refresh));
+    plugin.registerEvent(this.app.vault.on("rename", refresh));
+    plugin.registerEvent(this.app.metadataCache.on("changed", refresh));
+  }
+
+  private async refreshStatusCache(): Promise<void> {
+    const opts = taskSourceOptions(this.plugin.settings);
+    this.taskStatuses = collectStatuses(await loadTaskNotes(this.app, opts));
+    this.vaultStatusCache = collectVaultStatuses(this.app, opts);
+    this.update();
+  }
+
+  /**
+   * Declarative controls write to plugin.settings and persist on our behalf.
+   * Overriding the write path lets open Gantt views refresh too — the default
+   * implementation only calls saveData().
+   */
+  getControlValue(key: string): unknown {
+    return (this.plugin.settings as unknown as Record<string, unknown>)[key];
+  }
+
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
+    await this.save();
   }
 
   private async save(): Promise<void> {
@@ -136,255 +168,181 @@ class TaskGanttSettingTab extends PluginSettingTab {
     this.plugin.refreshGanttViews();
   }
 
-  /** Statuses found on in-scope notes — feeds the field suggestions. */
-  private vaultStatuses(): string[] {
-    return collectVaultStatuses(this.app, taskSourceOptions(this.plugin.settings));
-  }
-
-  /** Persist the status fields (trimmed, empties dropped, order kept). */
-  private async saveStatusFields(): Promise<void> {
-    this.plugin.settings.customStatuses = this.statusFields
-      .map((v) => v.trim())
-      .filter(Boolean);
-    await this.plugin.saveSettings();
-  }
-
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    // ── Opening behavior ──
-    new Setting(containerEl)
-      .setName("Default view")
-      .setDesc("View mode the Gantt opens with.")
-      .addDropdown((d) =>
-        d
-          .addOption("Day", "Day")
-          .addOption("Week", "Week")
-          .addOption("Month", "Month")
-          .setValue(this.plugin.settings.defaultViewMode)
-          .onChange(async (v) => {
-            this.plugin.settings.defaultViewMode = v as ViewMode;
-            await this.save();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Default status filter")
-      .setDesc(
-        "Status selected when the Gantt opens, matched case-insensitively. " +
-        "Leave empty to select the first available status."
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("e.g. In progress")
-          .setValue(this.plugin.settings.defaultStatus)
-          .onChange(async (v) => {
-            this.plugin.settings.defaultStatus = v.trim();
-            await this.save();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Remember last used view and filter")
-      .setDesc(
-        "On: reopening the Gantt restores your last view mode and status filter. " +
-        "Off: it always opens with the defaults above."
-      )
-      .addToggle((t) =>
-        t.setValue(this.plugin.settings.rememberLast).onChange(async (v) => {
-          this.plugin.settings.rememberLast = v;
-          await this.save();
-        })
-      );
-
-    // ── Task source ──
-    new Setting(containerEl)
-      .setName("Folder")
-      .setDesc(
-        "Only show notes from this folder (subfolders included). " +
-        "Leave empty to scan the whole vault."
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("e.g. Tasks")
-          .setValue(this.plugin.settings.sourceFolder)
-          .onChange(async (v) => {
-            const trimmed = v.trim();
-            this.plugin.settings.sourceFolder = trimmed
-              ? normalizePath(trimmed)
-              : "";
-            await this.save();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Required property")
-      .setDesc(
-        "Only show notes whose frontmatter contains this property (case-insensitive). " +
-        "Use \"name: value\" to also require a specific value, " +
-        "e.g. \"Kind: Project\". Leave empty for no requirement."
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("e.g. Kind: Project")
-          .setValue(this.plugin.settings.requiredProperty)
-          .onChange(async (v) => {
-            this.plugin.settings.requiredProperty = v.trim();
-            await this.save();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Start date property")
-      .setDesc(
-        "Frontmatter property holding the task start date (case-insensitive). " +
-        "Leave empty to use \"startDate\". Drags write dates back to this property."
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("startDate")
-          .setValue(this.plugin.settings.startProperty)
-          .onChange(async (v) => {
-            this.plugin.settings.startProperty = v.trim();
-            await this.save();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("End date property")
-      .setDesc(
-        "Frontmatter property holding the task end date (case-insensitive). " +
-        "Leave empty to use \"endDate\"."
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("endDate")
-          .setValue(this.plugin.settings.endProperty)
-          .onChange(async (v) => {
-            this.plugin.settings.endProperty = v.trim();
-            await this.save();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Project property")
-      .setDesc(
-        "Frontmatter property to use as the project group (case-insensitive). " +
-        "When set, a project filter dropdown appears in the chart toolbar. " +
-        "Leave empty to disable project filtering."
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("e.g. project")
-          .setValue(this.plugin.settings.projectProperty)
-          .onChange(async (v) => {
-            this.plugin.settings.projectProperty = v.trim();
-            await this.save();
-          })
-      );
-
-    // ── Statuses ──
-    new Setting(containerEl)
-      .setName("Statuses")
-      .setDesc(
-        "Always offered in the bar right-click menu, in this order, in " +
-        "addition to statuses found on your notes. Typing suggests " +
-        "existing statuses. Clear a field to remove it (empty fields " +
-        "are dropped when settings reopen)."
-      );
-
-    this.statusFields = [...this.plugin.settings.customStatuses];
-    while (this.statusFields.length < 4) this.statusFields.push("");
-
-    const fieldsEl = containerEl.createDiv();
-    const renderField = (value: string, i: number) => {
-      new Setting(fieldsEl).addText((t) => {
-        t.setPlaceholder("e.g. In progress").setValue(value);
-        const suggest = new StatusSuggest(this.app, t.inputEl, () =>
-          this.vaultStatuses()
-        );
-        suggest.onSelect((v) => {
-          t.setValue(v);
-          suggest.close();
-          this.statusFields[i] = v;
-          void this.saveStatusFields();
-        });
-        t.onChange(async (v) => {
-          this.statusFields[i] = v;
-          await this.saveStatusFields();
-        });
-      });
-    };
-    this.statusFields.forEach(renderField);
-
-    new Setting(containerEl).addButton((b) =>
-      b.setButtonText("Add status").onClick(() => {
-        this.statusFields.push("");
-        renderField("", this.statusFields.length - 1);
-      })
-    );
-
-    // ── Appearance ──
-    new Setting(containerEl)
-      .setName("Color bars by status")
-      .setDesc(
-        "Off: all bars use your theme's accent color. " +
-        "On: pick a color per status below."
-      )
-      .addToggle((t) =>
-        t.setValue(this.plugin.settings.colorByStatus).onChange(async (v) => {
-          this.plugin.settings.colorByStatus = v;
-          await this.save();
-          this.display(); // show/hide the per-status pickers
-        })
-      );
-
-    if (this.plugin.settings.colorByStatus) {
-      const colorsEl = containerEl.createDiv();
-      void this.renderStatusColorPickers(colorsEl);
-    }
-  }
-
-  private async renderStatusColorPickers(el: HTMLElement): Promise<void> {
+  getSettingDefinitions() {
     const s = this.plugin.settings;
-    const tasks = await loadTaskNotes(this.app, taskSourceOptions(s));
-    const statuses = collectStatuses(tasks);
 
-    if (statuses.length === 0) {
-      el.createEl("p", {
-        text: "No statuses found in your task notes yet.",
-        cls: "setting-item-description",
-      });
-      return;
-    }
+    return [
+      // ── Opening behavior (general — no heading, per the style guide) ──
+      {
+        name: "Default view",
+        desc: "View mode the Gantt opens with.",
+        control: {
+          type: "dropdown" as const,
+          key: "defaultViewMode",
+          options: { Day: "Day", Week: "Week", Month: "Month" },
+        },
+      },
+      {
+        name: "Default status filter",
+        desc: "Status selected when the Gantt opens, matched case-insensitively. Leave empty to select the first available status.",
+        control: {
+          type: "text" as const,
+          key: "defaultStatus",
+          placeholder: "e.g. In progress",
+        },
+      },
+      {
+        name: "Remember last used view and filter",
+        desc: "On: reopening restores your last view mode and status filter. Off: always open with the defaults above.",
+        control: { type: "toggle" as const, key: "rememberLast" },
+      },
 
-    for (const status of statuses) {
-      const key = status.toLowerCase();
-      new Setting(el)
-        .setName(status)
-        .addColorPicker((cp) =>
-          cp
-            .setValue(s.statusColors[key] ?? "#999999")
-            .onChange(async (v) => {
-              s.statusColors[key] = v;
-              await this.save();
-            })
-        )
-        .addExtraButton((b) =>
-          b
-            .setIcon("rotate-ccw")
-            .setTooltip("Reset to theme accent color")
-            .onClick(async () => {
-              delete s.statusColors[key];
-              await this.save();
-              this.display();
-            })
-        );
-    }
+      // ── Task source ──
+      {
+        type: "group" as const,
+        heading: "Task source",
+        items: [
+          {
+            name: "Folder",
+            desc: "Only show notes from this folder (subfolders included). Leave empty to scan the whole vault.",
+            control: {
+              type: "folder" as const,
+              key: "sourceFolder",
+              placeholder: "Whole vault",
+            },
+          },
+          {
+            name: "Required property",
+            desc: 'Only show notes whose frontmatter contains this property. Use "name: value" to also require a specific value.',
+            control: {
+              type: "text" as const,
+              key: "requiredProperty",
+              placeholder: "e.g. Kind: Project",
+            },
+          },
+          {
+            name: "Start date property",
+            desc: 'Frontmatter property holding the task start date. Leave empty to use "startDate". Drags write dates back to this property.',
+            control: {
+              type: "text" as const,
+              key: "startProperty",
+              placeholder: "startDate",
+            },
+          },
+          {
+            name: "End date property",
+            desc: 'Frontmatter property holding the task end date. Leave empty to use "endDate".',
+            control: {
+              type: "text" as const,
+              key: "endProperty",
+              placeholder: "endDate",
+            },
+          },
+          {
+            name: "Project property",
+            desc: "Frontmatter property to group tasks by. When set, a project filter appears in the chart toolbar.",
+            control: {
+              type: "text" as const,
+              key: "projectProperty",
+              placeholder: "e.g. project",
+            },
+          },
+        ],
+      },
+
+      // ── Statuses ──
+      {
+        type: "list" as const,
+        heading: "Statuses",
+        emptyState:
+          "No statuses defined. Added statuses are always offered in the bar right-click menu, in this order.",
+        addItem: {
+          name: "Add status",
+          action: () => {
+            s.customStatuses.push("");
+            void this.save();
+            this.update();
+          },
+        },
+        onReorder: async (oldIndex: number, newIndex: number) => {
+          const [moved] = s.customStatuses.splice(oldIndex, 1);
+          s.customStatuses.splice(newIndex, 0, moved);
+          await this.save();
+        },
+        onDelete: async (index: number) => {
+          s.customStatuses.splice(index, 1);
+          await this.save();
+          this.update();
+        },
+        items: s.customStatuses.map((value, i) => ({
+          name: "",
+          searchable: false,
+          // AbstractInputSuggest has no declarative control type, so the
+          // type-ahead field is built imperatively here.
+          render: (setting: Setting) => {
+            setting.addText((t) => {
+              t.setPlaceholder("e.g. In progress").setValue(value);
+              const suggest = new StatusSuggest(
+                this.app,
+                t.inputEl,
+                () => this.vaultStatusCache
+              );
+              suggest.onSelect((v) => {
+                t.setValue(v);
+                suggest.close();
+                s.customStatuses[i] = v;
+                void this.save();
+              });
+              t.onChange((v) => {
+                s.customStatuses[i] = v;
+                void this.save();
+              });
+            });
+          },
+        })),
+      },
+
+      // ── Appearance ──
+      {
+        type: "group" as const,
+        heading: "Appearance",
+        items: [
+          {
+            name: "Color bars by status",
+            desc: "Off: all bars use your theme's accent color. On: pick a color per status below.",
+            control: { type: "toggle" as const, key: "colorByStatus" },
+          },
+          ...this.taskStatuses.map((status) => ({
+            name: status,
+            visible: () => s.colorByStatus,
+            render: (setting: Setting) => {
+              const key = status.toLowerCase();
+              setting
+                .addColorPicker((cp) =>
+                  cp
+                    .setValue(s.statusColors[key] ?? "#999999")
+                    .onChange((v) => {
+                      s.statusColors[key] = v;
+                      void this.save();
+                    })
+                )
+                .addExtraButton((b) =>
+                  b
+                    .setIcon("rotate-ccw")
+                    .setTooltip("Reset to theme accent color")
+                    .onClick(() => {
+                      delete s.statusColors[key];
+                      void this.save();
+                      this.update();
+                    })
+                );
+            },
+          })),
+        ],
+      },
+    ];
   }
 }
-
 /** Suggests existing vault statuses while typing in a status field. */
 class StatusSuggest extends AbstractInputSuggest<string> {
   constructor(
