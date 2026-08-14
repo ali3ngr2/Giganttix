@@ -6,6 +6,7 @@ export interface TaskNote {
   status: string;     // value of "status" frontmatter field
   progress: number;   // 0–100, optional
   client: string;     // value of "client" frontmatter field
+  project: string;    // value of the user-configured project property
 }
 
 // Frappe Gantt task shape

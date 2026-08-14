@@ -6,6 +6,7 @@ export interface TaskSourceOptions {
   requiredProperty?: string; // "" or undefined → no requirement
   startProperty?: string;    // "" or undefined → "startDate"
   endProperty?: string;      // "" or undefined → "endDate"
+  projectProperty?: string;  // "" or undefined → no project field
 }
 
 export async function loadTaskNotes(
@@ -15,8 +16,9 @@ export async function loadTaskNotes(
   const tasks: TaskNote[] = [];
   const scope = parseScope(opts);
 
-  const startProp = (opts.startProperty ?? "").trim() || "startDate";
-  const endProp   = (opts.endProperty ?? "").trim() || "endDate";
+  const startProp   = (opts.startProperty ?? "").trim() || "startDate";
+  const endProp     = (opts.endProperty ?? "").trim() || "endDate";
+  const projectProp = (opts.projectProperty ?? "").trim();
 
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter;
@@ -56,6 +58,7 @@ export async function loadTaskNotes(
       status:   firstString(get("status")),
       progress,
       client:   parseClient(get("client")),
+      project:  projectProp ? firstString(get(projectProp)) : "",
     });
   }
 
@@ -69,6 +72,18 @@ export function collectStatuses(tasks: TaskNote[]): string[] {
     if (!t.status) continue;
     const key = t.status.toLowerCase();
     if (!seen.has(key)) seen.set(key, t.status);
+  }
+  return Array.from(seen.values()).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" })
+  );
+}
+
+export function collectProjects(tasks: TaskNote[]): string[] {
+  const seen = new Map<string, string>();
+  for (const t of tasks) {
+    if (!t.project) continue;
+    const key = t.project.toLowerCase();
+    if (!seen.has(key)) seen.set(key, t.project);
   }
   return Array.from(seen.values()).sort((a, b) =>
     a.localeCompare(b, undefined, { sensitivity: "base" })

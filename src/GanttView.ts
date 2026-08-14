@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, TFile, Menu } from "obsidian";
 import Gantt from "frappe-gantt";
-import { loadTaskNotes, collectStatuses, collectVaultStatuses, formatDate } from "./taskParser";
+import { loadTaskNotes, collectStatuses, collectProjects, collectVaultStatuses, formatDate } from "./taskParser";
 import { updateTaskDates, updateTaskProgress, updateTaskStatus } from "./frontmatterWriter";
 import { TaskNote, FrappeTask } from "./types";
 import type TaskGanttPlugin from "./main";
@@ -13,12 +13,16 @@ export class GanttView extends ItemView {
   private tasks: TaskNote[] = [];
   private gantt: Gantt | null = null;
   private statusFilter = "";
+  private projectFilter = "";
   private viewMode: ViewMode = "Week";
   private pendingWrites: Set<string> = new Set();
   private lastDragEnd = 0;
+  private scrollInitialized = false;
 
   private container!: HTMLElement;
   private filterSelect!: HTMLSelectElement;
+  private projectFilterLabel!: HTMLElement;
+  private projectFilterSelect!: HTMLSelectElement;
   private modeButtons: Map<ViewMode, HTMLButtonElement> = new Map();
 
   constructor(leaf: WorkspaceLeaf, private plugin: TaskGanttPlugin) {
@@ -104,6 +108,19 @@ export class GanttView extends ItemView {
       this.redraw();
     });
 
+    // Project filter (hidden until a project property is configured in settings)
+    const projectLabel = toolbar.createEl("label", { cls: "task-gantt-label" });
+    projectLabel.createSpan({ text: "Project:" });
+    this.projectFilterSelect = projectLabel.createEl("select", {
+      cls: ["dropdown", "task-gantt-select"],
+    });
+    this.projectFilterSelect.addEventListener("change", () => {
+      this.projectFilter = this.projectFilterSelect.value;
+      this.redraw();
+    });
+    this.projectFilterLabel = projectLabel;
+    projectLabel.hidden = true;
+
     // View mode buttons
     const modeGroup = toolbar.createDiv({ cls: "task-gantt-mode-group" });
     for (const mode of ["Day", "Week", "Month"] as ViewMode[]) {
@@ -184,6 +201,7 @@ export class GanttView extends ItemView {
     if (preserveScroll && JSON.stringify(fresh) === JSON.stringify(this.tasks)) return;
     this.tasks = fresh;
     this.rebuildFilterOptions();
+    this.rebuildProjectFilterOptions();
     this.redraw(preserveScroll);
   }
 
@@ -197,22 +215,56 @@ export class GanttView extends ItemView {
   }
 
   private getFiltered(): TaskNote[] {
-    if (!this.statusFilter) return this.tasks;
-    return this.tasks.filter(
-      (t) => t.status.toLowerCase() === this.statusFilter.toLowerCase()
-    );
+    let result = this.tasks;
+    if (this.statusFilter && this.statusFilter !== "__all__") {
+      result = result.filter(
+        (t) => t.status.toLowerCase() === this.statusFilter.toLowerCase()
+      );
+    }
+    if (this.projectFilter) {
+      result = result.filter(
+        (t) => t.project.toLowerCase() === this.projectFilter.toLowerCase()
+      );
+    }
+    return result;
   }
 
   private rebuildFilterOptions(): void {
-    const statuses = collectStatuses(this.tasks);
+    // Build ordered status list: custom statuses from settings first (user's
+    // order), then any remaining statuses found in tasks (alphabetical).
+    // Matches the ordering logic used in the bar right-click menu.
+    const taskStatuses = collectStatuses(this.tasks);
+    const seen = new Map<string, string>();
+    for (const st of this.plugin.settings.customStatuses) {
+      if (!st) continue;
+      const lower = st.toLowerCase();
+      const canonical = taskStatuses.find((ts) => ts.toLowerCase() === lower);
+      if (canonical && !seen.has(lower)) seen.set(lower, canonical);
+    }
+    for (const st of taskStatuses) {
+      if (!seen.has(st.toLowerCase())) seen.set(st.toLowerCase(), st);
+    }
+    const statuses = Array.from(seen.values());
     const prev = this.statusFilter;
 
     this.filterSelect.empty();
+    // "All" option — shows every task regardless of status
+    this.filterSelect.createEl("option", {
+      value: "__all__",
+      text: `All (${this.tasks.length})`,
+    });
     for (const s of statuses) {
       const count = this.tasks.filter(
         (t) => t.status.toLowerCase() === s.toLowerCase()
       ).length;
       this.filterSelect.createEl("option", { value: s, text: `${s} (${count})` });
+    }
+
+    // Restore "All" if it was previously selected
+    if (prev === "__all__") {
+      this.statusFilter = "__all__";
+      this.filterSelect.value = "__all__";
+      return;
     }
 
     const canonical = statuses.find((s) => s.toLowerCase() === prev.toLowerCase());
@@ -227,6 +279,34 @@ export class GanttView extends ItemView {
       this.statusFilter = preferred ?? statuses[0] ?? "";
       this.filterSelect.value = this.statusFilter;
     }
+  }
+
+  private rebuildProjectFilterOptions(): void {
+    const prop = this.plugin.settings.projectProperty.trim();
+    if (!prop) {
+      this.projectFilterLabel.hidden = true;
+      this.projectFilter = "";
+      return;
+    }
+    const projects = collectProjects(this.tasks);
+    if (projects.length === 0) {
+      this.projectFilterLabel.hidden = true;
+      this.projectFilter = "";
+      return;
+    }
+    this.projectFilterLabel.hidden = false;
+    const prev = this.projectFilter;
+    this.projectFilterSelect.empty();
+    this.projectFilterSelect.createEl("option", { value: "", text: "All projects" });
+    for (const p of projects) {
+      const count = this.tasks.filter(
+        (t) => t.project.toLowerCase() === p.toLowerCase()
+      ).length;
+      this.projectFilterSelect.createEl("option", { value: p, text: `${p} (${count})` });
+    }
+    const canonical = projects.find((p) => p.toLowerCase() === prev.toLowerCase());
+    this.projectFilter = canonical ?? "";
+    this.projectFilterSelect.value = this.projectFilter;
   }
 
   // ── View mode ──────────────────────────────────────────────────────────────
@@ -244,7 +324,10 @@ export class GanttView extends ItemView {
   private drawGantt(tasks: TaskNote[], preserveScroll = false): void {
     // Capture scroll position of the old chart before it is destroyed
     const prevGc = this.container.querySelector(".gantt-container");
-    const saved = preserveScroll && prevGc
+    // Only restore scroll if jumpToToday has already run at least once —
+    // otherwise we'd capture scrollLeft=0 from before the initial jump and
+    // immediately undo it when the saved position is restored.
+    const saved = preserveScroll && prevGc && this.scrollInitialized
       ? { left: prevGc.scrollLeft, top: prevGc.scrollTop }
       : null;
 
@@ -479,17 +562,40 @@ export class GanttView extends ItemView {
     svg.appendChild(line);
   }
 
-  private jumpToToday(x: number, attempts = 10): void {
+  private jumpToToday(
+    x: number,
+    attempts = 10,
+    deadline = Date.now() + 15_000
+  ): void {
     const gc = this.contentEl.querySelector(".gantt-container");
     if (!gc) return;
+
+    // Not laid out yet. On startup Obsidian restores this leaf lazily and
+    // the container can sit at zero width for seconds while the vault
+    // indexes — waiting for width must NOT consume the retry budget, or we
+    // give up before the chart exists and stay parked at scrollLeft 0
+    // (which renders as the chart's left edge, i.e. "it opened in April").
+    if (gc.clientWidth === 0) {
+      if (Date.now() < deadline) {
+        window.setTimeout(() => this.jumpToToday(x, attempts, deadline), 50);
+      }
+      return;
+    }
+
     const target = Math.max(0, x - gc.clientWidth / 2);
     gc.scrollLeft = target;
-    // On first open the leaf may not be laid out yet (clientWidth 0 /
-    // scrollWidth too small) — scrollLeft gets clamped and today ends up
-    // off-center. Verify and retry until layout settles (max ~500ms).
-    const settled = gc.clientWidth > 0 && Math.abs(gc.scrollLeft - target) < 2;
-    if (!settled && attempts > 0) {
-      window.setTimeout(() => this.jumpToToday(x, attempts - 1), 50);
+    if (Math.abs(gc.scrollLeft - target) < 2) {
+      this.scrollInitialized = true;
+      return;
+    }
+    // Assignment didn't stick: either layout is still settling, or the
+    // chart is narrower than the target and the browser clamped us to max
+    // scroll. Retry a few times, then accept the clamped position — it is
+    // already as close to today as this chart can get.
+    if (attempts > 0) {
+      window.setTimeout(() => this.jumpToToday(x, attempts - 1, deadline), 50);
+    } else {
+      this.scrollInitialized = true;
     }
   }
 

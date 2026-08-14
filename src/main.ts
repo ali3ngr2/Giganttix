@@ -28,6 +28,7 @@ export interface TaskGanttSettings {
   requiredProperty: string; // "" → no property requirement
   startProperty: string;    // "" → "startDate"
   endProperty: string;      // "" → "endDate"
+  projectProperty: string;  // "" → no project filter
   customStatuses: string[]; // always offered in the bar menu, in this order
 }
 
@@ -43,6 +44,7 @@ const DEFAULT_SETTINGS: TaskGanttSettings = {
   requiredProperty: "",
   startProperty: "",
   endProperty: "",
+  projectProperty: "",
   customStatuses: [],
 };
 
@@ -65,6 +67,7 @@ export function taskSourceOptions(s: TaskGanttSettings): TaskSourceOptions {
     requiredProperty: s.requiredProperty,
     startProperty: s.startProperty,
     endProperty: s.endProperty,
+    projectProperty: s.projectProperty,
   };
 }
 
@@ -260,6 +263,23 @@ class TaskGanttSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.endProperty)
           .onChange(async (v) => {
             this.plugin.settings.endProperty = v.trim();
+            await this.save();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Project property")
+      .setDesc(
+        "Frontmatter property to use as the project group (case-insensitive). " +
+        "When set, a project filter dropdown appears in the chart toolbar. " +
+        "Leave empty to disable project filtering."
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder("e.g. project")
+          .setValue(this.plugin.settings.projectProperty)
+          .onChange(async (v) => {
+            this.plugin.settings.projectProperty = v.trim();
             await this.save();
           })
       );
